@@ -25,6 +25,9 @@ xarray = "2023.10.1"
 pytensor = "2.18.4"
 ipykernel = "6.29.4"
 graphviz = "^0.20.3"
+scikit-learn = "^1.5.0"
+seaborn = "^0.13.2"
+pandas-stubs = "^2.2.2.240603"
 
 [build-system]
 requires = ["poetry-core"]
