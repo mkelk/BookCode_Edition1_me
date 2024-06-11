@@ -68,19 +68,26 @@ class MyModel():
             self.model = model
 
             # control variables
-            spend_tv = self.data["tv"].values
+            # tv = self.data["tv"].values
+
+             # Define tv as a shared variable
+            tv = pm.Data('tv', self.data["tv"], mutable=True)
+            radio = pm.Data('radio', self.data["radio"], mutable=True)
+            newspaper = pm.Data('newspaper', self.data["newspaper"], mutable=True)
 
             # PRIORS for unknown model parameters
             # intercept gets a prior here
             beta_i = pm.Normal("beta_i", mu=4, sigma=1, initval=1)
 
-            # tv gets a prior here
+            # betas gets priors here
             beta_tv = pm.Normal("beta_tv", mu=0.1, sigma=0.1)
+            beta_radio = pm.Normal("beta_radio", mu=0.1, sigma=0.1)
+            beta_newspaper = pm.Normal("beta_newspaper", mu=0.1, sigma=0.1)
 
             # sigma for the model gets a prior here
             sigma = pm.HalfNormal("sigma", sigma=1)
 
-            y_obs = pm.Normal("y_obs", mu=beta_i + beta_tv * spend_tv, sigma=sigma, observed=self.obsdata)
+            y_obs = pm.Normal("y_obs", mu=beta_i + beta_tv * tv + beta_radio * radio + beta_newspaper * newspaper, sigma=sigma, observed=self.obsdata)
 
             # Sample observed data points (time series) from the prior distribution 
             # idata_inf collects both the prior and posterior predictive samples and the posterior samples of parameters
@@ -90,29 +97,59 @@ class MyModel():
             # Add to the inference data object
             self.idata_inf.extend(self.idata)
             # Sample observed data points (time series) using the posterior distribution of parameters and the inference data object
-            pm.sample_posterior_predictive(self.idata_inf, extend_inferencedata=True)    
+            # will set self.idata_inf.posterior_predictive["y_obs"] to the posterior predictive samples
+            pm.sample_posterior_predictive(self.idata_inf, extend_inferencedata=True)
+
+
+    def contribution_full_from_feature(self, feature: str):
+        sales_org = self.data[self.obsvar].mean()
+        spend = self.data[feature].mean()
+
+        # original spends
+        spend_vars = {feature: self.data[feature].copy() for feature in self.features}
+        # remove the spend for the feature
+        spend_vars[feature] = spend_vars[feature] * 0
+
+        with self.model:
+            pm.set_data(spend_vars)
+            new_pp = pm.sample_posterior_predictive(self.idata_inf)
+            sales_new = new_pp.posterior_predictive["y_obs"].mean().item()
+        
+        contribution = sales_org - sales_new
+        return {"spend": spend, "sales_org": sales_org, "sales_new": sales_new, "contribution": contribution, "full_roas": contribution / spend}
+
+
+    def contribution_full(self):
+        contributions = { feature: self.contribution_full_from_feature(feature) for feature in self.features}
+        return contributions
+
 
     def line_plot_general(self, features: list, title: str, normalize: bool = True) -> None:
         line_plot(self.data.copy(), features, title, normalize)
+
 
     def plot_channel_spends(self, normalize: bool = False) -> None:
         """Plot all channel spends on same chart"""
         self.line_plot_general(self.features, 'Channel Spends', normalize)
 
+
     def plot_sales(self, normalize: bool = False) -> None:
         """Plot sales in original data"""
         self.line_plot_general([self.obsvar], 'Sales', normalize)
+
 
     def plot_channel_spends_vs_sales(self) -> None:
         """Plot channel spends vs sales for each channel and shown normalized"""
         for feature in self.features:
             self.line_plot_general([feature] + [self.obsvar], f'{feature} spend vs Sales')
 
+
     def plot_correlation_matrix(self) -> None:
         """Plot correlation matrix between channel spends and sales"""
         corr_matrix = self.data[self.features + [self.obsvar]].corr()
         sns.heatmap(corr_matrix, annot=True, cmap='Blues')
         plt.show()
+
 
     def overall_numbers(self) -> dict:
         """Print overall numbers"""
@@ -124,6 +161,7 @@ class MyModel():
             overall[f'{feature}: Overall total sales divided by total spend'] = self.obsdata.sum() / self.data[feature].sum()
         return overall
     
+
     def show_model_graphviz(self):
         """Show model graphviz representation"""
         if self.model is not None:
@@ -132,6 +170,7 @@ class MyModel():
         else:
             raise ValueError("Model not fitted yet")
 
+
     def show_chain_traces(self):
         """Show the chain traces and the distributions of the parameters per chain"""
         if self.idata is not None:
@@ -139,6 +178,7 @@ class MyModel():
         else:
             raise ValueError("Model not fitted yet")
         
+
     def show_prior_and_posterior_distribution(self):
         """Show the prior and posterior distribution of the parameters"""
         if self.idata is not None:
@@ -146,6 +186,7 @@ class MyModel():
         else:
             raise ValueError("Model not fitted yet")
         
+
     def get_posterior_distribution_overview(self):
         """Gets an overview table of the properties of the posterior distribution of the parameters"""
         if self.idata is not None:
@@ -153,11 +194,11 @@ class MyModel():
         else:
             raise ValueError("Model not fitted yet")
         
+
     def plot_sales_vs_predicted(self):
         """Plots the observed sales vs the posterior predicted sales"""
         if self.idata is not None:
             obsdata_chains = self.idata_inf.posterior_predictive["y_obs"]
-            # tmp = mymodel.idata_inf.posterior_predictive["y_obs"]
             obsdata_chains_stacked = obsdata_chains.stack(index=("chain", "draw"))
             # calculate the mean for each of the 200 timestamps
             obsdata_mean = obsdata_chains_stacked.mean(dim="index")
